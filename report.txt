@@ -1,0 +1,147 @@
+================================================================================
+ Network Packet Monitoring and Ethernet Frame Analysis System
+ Project Report
+================================================================================
+
+1. OVERVIEW
+--------------------------------------------------------------------------------
+This project is a lightweight network packet monitoring tool that captures live
+network traffic and analyses the Ethernet frames and the protocols carried
+inside them.  For every captured frame it prints the source/destination MAC
+addresses and EtherType, then drills into the payload to describe ARP, IPv4,
+IPv6, TCP, UDP and ICMP.  Captured frames can also be written to a .pcap file so
+they can be opened later in Wireshark.  It is a command-line application written
+in Python 3 using the Scapy packet-manipulation library, developed and tested on
+Windows 11.
+
+2. OBJECTIVES
+--------------------------------------------------------------------------------
+- Capture live packets from a network interface chosen by the user.
+- Decode and display Ethernet-level information (MAC source/destination,
+  EtherType).
+- Identify and describe the network/transport protocols inside each frame.
+- Summarise observed traffic with per-protocol statistics.
+- Optionally export captures to the standard .pcap format.
+- Behave safely and informatively even when optional capture drivers (Npcap)
+  are not installed.
+
+3. FEATURES
+--------------------------------------------------------------------------------
+- Interactive interface picker that lists only usable adapters with their
+  adapter name and IPv4 address, and marks the active/default interface.
+- Automatic default: pressing Enter selects the current active adapter.
+- Live, human-readable per-frame output.
+- Layer-2 (Ethernet) analysis: MAC addresses and EtherType
+  (IPv4 / ARP / IPv6 / VLAN).
+- Layer-3/Layer-4 analysis: IPv4/IPv6 source and destination, TTL, protocol,
+  length; TCP/UDP ports; ICMP type and code.
+- Raw payload preview, shown as the first 32 bytes in hexadecimal.
+- Per-protocol capture statistics printed on exit.
+- Optional .pcap export of all captured frames.
+- Graceful fallback: if Npcap is missing, it automatically switches to Scapy's
+  native layer-3 socket instead of crashing, and prints clear guidance.
+
+4. TECHNOLOGY AND ARCHITECTURE
+--------------------------------------------------------------------------------
+Language : Python 3
+Library  : Scapy 2.8.0 (https://scapy.net)
+Platform : Windows 11
+Driver   : Npcap (recommended; enables full layer-2 capture)
+
+The application is deliberately small and single-file.  Its logic is organised
+into small functions:
+
+  pick_interface()            - lists usable interfaces and reads the choice
+  iface_ipv4() / is_usable()  - filter out adapters without a real IPv4 address
+  describe_ethernet()         - prints MAC source/destination and EtherType
+  describe_arp()              - prints ARP request/reply details
+  describe_ip()               - prints IP and TCP/UDP/ICMP details
+  describe_payload()          - prints a hex preview of raw data
+  handle()                    - callback invoked for every captured packet
+  print_stats()               - prints the final protocol summary
+  start_sniff() / _l3_sniff() - start capture, with layer-2 -> layer-3 fallback
+  main()                      - argument parsing and program flow
+
+Capture is driven by Scapy's sniff() function, which calls handle() for each
+packet.  Frames are not stored in memory during capture (store=False) to keep
+memory use low; packets are only buffered when --pcap output is requested.
+
+5. FILES
+--------------------------------------------------------------------------------
+  monitor.py        Main application (all logic)
+  requirements.txt  Python dependencies (scapy)
+  README.md         Setup and usage instructions
+  report.txt        This report
+
+6. HOW TO RUN
+--------------------------------------------------------------------------------
+1) Install Python 3 (enable "Add Python to PATH").
+2) (Recommended) Install Npcap from https://npcap.com, enabling
+   "WinPcap API-compatible Mode".
+3) Install dependencies:      pip install -r requirements.txt
+4) Open the terminal AS ADMINISTRATOR (live capture requires elevation).
+5) Run:                       python monitor.py
+
+Command-line options:
+  --iface NAME    capture on a specific interface (skips the picker)
+  --count N       stop after N packets (0 = until Ctrl+C)
+  --pcap FILE     save captured frames to a .pcap file
+
+Examples:
+  python monitor.py --count 20
+  python monitor.py --iface "Wi-Fi" --count 50
+  python monitor.py --pcap capture.pcap
+
+Stop at any time with Ctrl+C; a statistics summary is printed on exit.
+
+7. SAMPLE OUTPUT
+--------------------------------------------------------------------------------
+  ============================================================
+  Frame #1   [21:34:02]
+  Ethernet: dst=00:1a:2b:3c:4d:5e  src=aa:bb:cc:dd:ee:ff  type=0x0800 (IPv4)
+     IPv4: 192.168.1.5 -> 8.8.8.8  ttl=64 proto=6 len=84
+     TCP : 54321 -> 443
+     Payload (24 bytes): 16 03 01 00 2C 01 00 ...
+
+  When the layer-3 fallback is used, frames have no Ethernet header and are
+  shown as:  Layer 3 frame (no Ethernet header): <summary>
+
+8. TESTING AND VERIFICATION
+--------------------------------------------------------------------------------
+- Verified interface enumeration on a machine with 40 detected interfaces,
+  correctly reducing them to the adapters that own a real IPv4 address.
+- Verified the automatic selection of the active Wi-Fi adapter.
+- Verified graceful degradation: with Npcap absent, the program prints clear
+  instructions and attempts the native layer-3 socket rather than raising an
+  unhandled exception.
+- Handles an invalid bind address by retrying the capture on the default
+  adapter.
+- Verified that .pcap output can be written and read back (Wireshark format).
+
+9. LIMITATIONS
+--------------------------------------------------------------------------------
+- Full Ethernet-frame capture requires Npcap; the layer-3 fallback exposes only
+  IP traffic (no MAC addresses) and still requires Administrator rights.
+- TCP payload data is not fully visible through the native Windows raw socket;
+  Npcap removes this limitation.
+- Wi-Fi adapters capture only traffic visible to the host; capturing all
+  traffic from other devices would require monitor mode.
+
+10. FUTURE WORK
+--------------------------------------------------------------------------------
+- A graphical user interface (GUI) for interface selection and live packet
+  display.
+- Filtering and search (e.g. by protocol, IP or port).
+- Export of statistics to CSV/JSON.
+- Colourised output and richer protocol decoding.
+
+11. CONCLUSION
+--------------------------------------------------------------------------------
+The project meets its goal of a compact, correct and user-friendly packet
+monitoring application.  It captures live traffic, explains each frame from
+Ethernet layer down to transport layer, summarises protocol usage, and can save
+captures for offline analysis.  It also handles the real-world case where Npcap
+is unavailable, degrading gracefully with clear guidance instead of failing.
+The clean single-file structure and function-based design make it a solid base
+for the planned GUI extension.
+================================================================================

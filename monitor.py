@@ -12,7 +12,7 @@ import sys
 from collections import Counter
 from datetime import datetime
 
-from scapy.all import get_if_list, sniff, wrpcap
+from scapy.all import conf, get_if_list, sniff, wrpcap
 from scapy.layers.l2 import ARP, Ether
 from scapy.layers.inet import ICMP, IP, TCP, UDP
 from scapy.layers.inet6 import IPv6
@@ -27,22 +27,63 @@ ETH_TYPES = {
 
 stats = Counter()
 frame_no = 0
+save_packets = False
+captured = []
+
+
+def iface_ipv4(iface):
+    """Return the usable IPv4 addresses of an interface (link-local excluded)."""
+    return [ip for ip in iface.ips[4] if ip and not ip.startswith("169.254.")]
+
+
+def is_usable(iface):
+    """An interface is usable when it owns at least one real IPv4 address."""
+    return bool(iface_ipv4(iface))
+
+
+def list_capture_interfaces():
+    """Return only interfaces that can actually be captured on, preserving the
+    order used by ``get_if_list()``."""
+    by_name = {iface.network_name: iface for iface in conf.ifaces.values()}
+    entries = []
+    for name in get_if_list():
+        iface = by_name.get(name)
+        if iface is not None and is_usable(iface):
+            entries.append(iface)
+    return entries
+
+
+def default_network_name():
+    iface = conf.iface
+    return getattr(iface, "network_name", iface)
 
 
 def pick_interface():
-    interfaces = get_if_list()
-    if not interfaces:
-        print("No capture interfaces found. Is Npcap installed?")
+    entries = list_capture_interfaces()
+    if not entries:
+        print("No usable capture interfaces found. Is Npcap installed?")
         sys.exit(1)
 
-    print("Available interfaces:")
-    for index, name in enumerate(interfaces, start=1):
-        print(f"  [{index}] {name}")
+    default_name = default_network_name()
+    default_index = next(
+        (i for i, f in enumerate(entries, 1) if f.network_name == default_name),
+        None,
+    )
 
+    print("Available interfaces:")
+    for index, iface in enumerate(entries, start=1):
+        ipv4 = ", ".join(iface_ipv4(iface)) or "-"
+        label = iface.description or iface.name
+        marker = "  <-- default" if iface.network_name == default_name else ""
+        print(f"  [{index}] {label}  ({ipv4}){marker}")
+
+    prompt = f"Select an interface number [{default_index}]: " if default_index else "Select an interface number: "
     while True:
-        choice = input("Select an interface number: ").strip()
-        if choice.isdigit() and 1 <= int(choice) <= len(interfaces):
-            return interfaces[int(choice) - 1]
+        choice = input(prompt).strip()
+        if not choice and default_index:
+            return entries[default_index - 1].network_name
+        if choice.isdigit() and 1 <= int(choice) <= len(entries):
+            return entries[int(choice) - 1].network_name
         print("Invalid choice, try again.")
 
 
@@ -84,15 +125,19 @@ def handle(pkt):
     global frame_no
     frame_no += 1
 
-    eth = pkt.getlayer(Ether)
-    if eth is None:
-        stats["Non-Ethernet"] += 1
-        return
+    if save_packets:
+        captured.append(pkt)
 
-    stats["Ethernet frames"] += 1
+    eth = pkt.getlayer(Ether)
     print("=" * 60)
     print(f"Frame #{frame_no}   [{datetime.now().strftime('%H:%M:%S')}]")
-    describe_ethernet(eth)
+
+    if eth is not None:
+        stats["Ethernet frames"] += 1
+        describe_ethernet(eth)
+    else:
+        stats["Non-Ethernet"] += 1
+        print(f"Layer 3 frame (no Ethernet header): {pkt.summary()}")
 
     if pkt.haslayer(ARP):
         stats["ARP"] += 1
@@ -116,12 +161,51 @@ def print_stats():
         print(f"  {name:<16} {count}")
 
 
+def _l3_sniff(iface, count):
+    """Native layer-3 capture, falling back to the default interface when the
+    chosen one has no valid bind address."""
+    kwargs = dict(prn=handle, store=False, count=count, L2socket=conf.L3socket)
+    try:
+        sniff(iface=iface, **kwargs)
+    except (RuntimeError, OSError) as exc:
+        default = default_network_name()
+        text = str(exc)
+        if iface != default and ("10049" in text or "not valid" in text):
+            print(f"Could not bind to {iface}; using default interface {default}.")
+            sniff(iface=default, **kwargs)
+        else:
+            raise
+
+
+def start_sniff(iface, count):
+    """Sniff at layer 2, falling back to the native layer-3 socket if Npcap
+    (WinPcap) is not installed on Windows."""
+    kwargs = dict(iface=iface, prn=handle, store=False, count=count)
+    try:
+        sniff(**kwargs)
+    except (RuntimeError, OSError) as exc:
+        text = str(exc)
+        if not any(k in text for k in ("layer 2", "winpcap", "Npcap", "administrator")):
+            raise
+        print("\nNpcap/WinPcap is not available for layer-2 (Ethernet) capture.")
+        print("Falling back to the native layer-3 socket (requires Administrator).")
+        print("Install Npcap from https://npcap.com for full Ethernet-frame capture.\n")
+        _l3_sniff(iface, count)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Network packet monitoring and Ethernet frame analysis.")
     parser.add_argument("--iface", help="interface to capture on")
     parser.add_argument("--count", type=int, default=0, help="packets to capture (0 = until Ctrl+C)")
     parser.add_argument("--pcap", help="write captured frames to this .pcap file")
     args = parser.parse_args()
+
+    global save_packets
+    save_packets = bool(args.pcap)
+
+    if not conf.use_pcap:
+        print("WARNING: Npcap not found - layer-2 capture disabled.")
+        print("Install Npcap from https://npcap.com to capture full Ethernet frames.\n")
 
     iface = args.iface or pick_interface()
     print(f"\nCapturing on: {iface}")
@@ -130,12 +214,21 @@ def main():
     print("Press Ctrl+C to stop.\n")
 
     try:
-        sniff(iface=iface, prn=handle, store=False, count=args.count or 0)
+        start_sniff(iface, args.count or 0)
     except KeyboardInterrupt:
         pass
     except PermissionError:
         print("\nPermission denied. Run your terminal as Administrator.")
         return
+    except (RuntimeError, OSError) as exc:
+        print(f"\nCapture failed: {exc}")
+        print("Install Npcap (https://npcap.com) for layer-2 capture, or run this")
+        print("script as Administrator for the native layer-3 fallback.")
+        return
+
+    if args.pcap and captured:
+        wrpcap(args.pcap, captured)
+        print(f"\nSaved {len(captured)} frames to {args.pcap}")
 
     print_stats()
 

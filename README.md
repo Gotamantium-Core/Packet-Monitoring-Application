@@ -19,10 +19,12 @@ during installation. Verify in a new Git Bash window:
 python --version
 ```
 
-### Step 2 - Install Npcap (required for capturing)
+### Step 2 - Install Npcap (recommended for capturing)
 Download from <https://npcap.com/#download> and install it. **During setup, check
-"Install Npcap in WinPcap API-compatible Mode".** Scapy cannot capture packets on
-Windows without this driver.
+"Install Npcap in WinPcap API-compatible Mode".** Npcap gives Scapy full
+layer-2 capture on Windows (Ethernet headers, ARP, etc.). Without it the program
+still runs by falling back to Scapy's native layer-3 socket, but only IP traffic
+is captured and no Ethernet header is shown.
 
 ### Step 3 - Install dependencies
 From this project folder:
@@ -43,8 +45,9 @@ pip install -r requirements.txt
 python monitor.py
 ```
 
-If you do not pass `--iface`, the program lists all capture interfaces and asks
-you to pick a number.
+If you do not pass `--iface`, the program lists the usable capture interfaces
+(adapter name + IPv4) and asks you to pick a number. The active/default adapter
+is marked and selected when you just press **Enter**.
 
 ### Options
 
@@ -86,6 +89,9 @@ Ethernet: dst=00:1a:2b:3c:4d:5e  src=aa:bb:cc:dd:ee:ff  type=0x0800 (IPv4)
 | `ICMP` | type/code (e.g. ping) |
 | `Payload` | First 32 bytes of raw data in hexadecimal |
 
+When running without Npcap, frames arrive without an Ethernet header and are
+shown as `Layer 3 frame (no Ethernet header)` with the IP details underneath.
+
 On **Ctrl+C** a summary is printed showing counts of total frames and each
 protocol observed.
 
@@ -95,8 +101,11 @@ protocol observed.
 
 - **Administrator rights are required.** Always start your terminal as
   Administrator or capture will fail/return nothing.
-- **Npcap must be installed** before any frames will appear.
+- **Npcap is recommended.** With Npcap installed you get full layer-2 capture
+  (Ethernet headers, ARP, etc.). Without it, the program automatically falls back
+  to Scapy's native layer-3 socket, which still captures IP traffic but exposes
+  **no Ethernet header** (and still requires Administrator).
 - **Ethernet headers are only visible on real Npcap-backed interfaces.** The
-  loopback adapter may not show an Ethernet header.
+  loopback adapter and the layer-3 fallback may not show an Ethernet header.
 - Wi-Fi adapters usually need to be in normal (managed) mode to capture your own
   traffic; capturing *all* traffic from other devices requires monitor mode.
