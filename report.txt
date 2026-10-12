@@ -5,74 +5,124 @@
 
 1. OVERVIEW
 --------------------------------------------------------------------------------
-This project is a lightweight network packet monitoring tool that captures live
-network traffic and analyses the Ethernet frames and the protocols carried
-inside them.  For every captured frame it prints the source/destination MAC
-addresses and EtherType, then drills into the payload to describe ARP, IPv4,
-IPv6, TCP, UDP, ICMP and ICMPv6.  Captured frames can also be written to a .pcap file so
-they can be opened later in Wireshark.  It is a command-line application written
-in Python 3 using the Scapy packet-manipulation library, developed and tested on
-Windows 11.
+This program captures network traffic from a network interface and reads the
+Ethernet frames and the protocols inside them. For each frame it shows the
+source and destination MAC addresses and the EtherType, then looks into the
+payload and reports ARP, IPv4, IPv6, TCP, UDP, ICMP and ICMPv6. Frames can be
+filtered while capturing using BPF filter strings, and saved to .pcap, .json or
+.csv. Saved JSON and CSV records can be imported back for offline inspection,
+and the CLI can convert an imported capture into any of the other formats.
+
+There are two ways to use it. gui.py is a desktop application built with PyQt6;
+it shows the packets in a table and lets you click one to see its layers and its
+raw bytes. monitor.py is the command-line program for capturing without a
+window or from a script.
+
+The code is written in Python 3 and uses Scapy. It runs on Windows, Linux and
+macOS, and was developed and tested on Windows 11.
 
 2. OBJECTIVES
 --------------------------------------------------------------------------------
-- Capture live packets from a network interface chosen by the user.
-- Decode and display Ethernet-level information (MAC source/destination,
-  EtherType).
-- Identify and describe the network/transport protocols inside each frame.
-- Summarise observed traffic with per-protocol statistics.
-- Optionally export captures to the standard .pcap format.
-- Behave safely and informatively even when optional capture drivers (Npcap)
-  are not installed.
+- Capture live packets from an interface chosen by the user.
+- Read and display the Ethernet information (MAC source/destination, EtherType).
+- Identify and describe the protocols inside each frame.
+- Offer both a graphical and a command-line interface that share the same code.
+- Allow filtering during capture with standard BPF expressions.
+- Keep a count of the protocols seen.
+- Export frames and parsed records to .pcap, .json and .csv.
+- Import JSON and CSV records for offline inspection and format conversion.
+- Keep working, with a clear message, when Npcap is not installed.
+- Build the GUI into a single executable that does not need Python installed.
 
 3. FEATURES
 --------------------------------------------------------------------------------
-- Interactive interface picker that lists only usable adapters with their
-  adapter name and IPv4 address, and marks the active/default interface.
-- Automatic default: pressing Enter selects the current active adapter.
-- Live, human-readable per-frame output.
-- Layer-2 (Ethernet) analysis: MAC addresses and EtherType
-  (IPv4 / ARP / IPv6 / VLAN).
-- Layer-3/Layer-4 analysis: IPv4/IPv6 source and destination, TTL/hop limit,
-  protocol, length; TCP/UDP ports; ICMP and ICMPv6 type and code.
-- Raw payload preview, shown as the first 32 bytes in hexadecimal.
-- Per-protocol capture statistics printed on exit.
-- Optional .pcap export of all captured frames.
-- Graceful fallback: if Npcap is missing, it automatically switches to Scapy's
-  native layer-3 socket instead of crashing, and prints clear guidance.
+Graphical interface (gui.py):
+- One window with three panes: the packet table, the layer/field tree and the
+  hex/ASCII view. The panes are resizable.
+- A drop-down list of usable adapters showing their description and IPv4
+  address. The active adapter is selected by default.
+- Packet table with No., Time, Source, Destination, Protocol, Length and
+  Summary columns. The Protocol column is colour-coded.
+- For the selected frame, a tree of its layers and fields and a 16-byte-wide
+  hex dump with an ASCII column.
+- A search box that hides rows that do not match the typed text, and an
+  auto-scroll checkbox.
+- Menus and keyboard shortcuts for start, stop, clear, opening .pcap files,
+  importing JSON/CSV, exporting .pcap/.json/.csv, exit and about.
+
+Command-line interface (monitor.py):
+- A list of usable adapters with their name and IPv4 address. Pressing Enter
+  picks the active one.
+
+Shared capture and decoding code (monitor.py):
+- BPF filters at capture time, for example "tcp port 80", "udp", "icmp".
+- Ethernet decoding: MAC addresses and EtherType (IPv4 / ARP / IPv6 / VLAN).
+- Network and transport decoding: IPv4/IPv6 addresses, TTL or hop limit,
+  protocol and length; TCP/UDP ports; ICMP and ICMPv6 type and code.
+- A short hex preview of the payload (first 32 bytes) and a full hex dump.
+- A per-protocol count printed when the CLI exits.
+- Export to .pcap (frames), .json and .csv (parsed records).
+- Import of .json and .csv records (offline mode), rebuilding packets where
+  possible so a capture can be inspected again and converted between formats.
+- Opening a saved .pcap in the GUI without needing capture privileges.
+- Interface enumeration and privilege checks for Windows, Linux and macOS.
+- If Npcap is missing, the CLI switches to Scapy's native layer-3 socket
+  instead of stopping, and prints what to install.
 
 4. TECHNOLOGY AND ARCHITECTURE
 --------------------------------------------------------------------------------
 Language : Python 3
-Library  : Scapy 2.8.0 (https://scapy.net)
-Platform : Windows 11
-Driver   : Npcap (recommended; enables full layer-2 capture)
+Libraries: Scapy >= 2.5.0 (https://scapy.net)
+           PyQt6 >= 6.5.0 (GUI)
+Platform : Windows 11, Linux, macOS
+Driver   : Npcap on Windows for full layer-2 capture; PF_PACKET sockets on
+           Linux and /dev/bpf on macOS
 
-The application is deliberately small and single-file.  Its logic is organised
-into small functions:
+The decoding and capture code has no user-interface code in it. monitor.py
+holds the capture, decoding, counting and export functions, and gui.py imports
+it and puts the interface on top. The standalone builds use PyInstaller, run
+through build.sh on Linux/macOS and build.bat on Windows.
 
-  pick_interface()            - lists usable interfaces and reads the choice
-  iface_ipv4() / is_usable()  - filter out adapters without a real IPv4 address
-  describe_ethernet()         - prints MAC source/destination and EtherType
-  describe_arp()              - prints ARP request/reply details
-  describe_ip()               - prints IP and TCP/UDP/ICMP/ICMPv6 details
-  find_icmpv6()               - locates any ICMPv6 layer across Scapy versions
-  describe_payload()          - prints a hex preview of raw data
-  handle()                    - callback invoked for every captured packet
-  print_stats()               - prints the final protocol summary
-  start_sniff() / _l3_sniff() - start capture, with layer-2 -> layer-3 fallback
+monitor.py:
+  iface_ipv4() / is_usable()  - pick out adapters with a real IPv4 address
+  list_capture_interfaces()   - list usable capture interfaces
+  default_network_name()      - find the active adapter
+  check_privileges() / print_privilege_hint() - privilege checks per OS
+  pick_interface()            - CLI interface selection
+  describe_ethernet()         - print MAC source/destination and EtherType
+  describe_arp()              - print ARP request/reply details
+  describe_ip()               - print IP and TCP/UDP/ICMP/ICMPv6 details
+  find_icmpv6()               - find the ICMPv6 layer across Scapy versions
+  describe_payload()          - print a hex preview of raw data
+  extract_record()            - build the record used by the table and exports
+  handle()                    - called for every captured packet
+  print_stats()               - print the protocol count
+  export_json() / export_csv()- write records to JSON or CSV
+  import_json() / import_csv()- read records back from JSON or CSV
+  record_to_packet()          - rebuild a Scapy packet from an imported record
+  start_sniff() / _l3_sniff() - start capture, fall back from layer 2 to layer 3
   main()                      - argument parsing and program flow
 
-Capture is driven by Scapy's sniff() function, which calls handle() for each
-packet.  Frames are not stored in memory during capture (store=False) to keep
-memory use low; packets are only buffered when --pcap output is requested.
+gui.py:
+  format_hex_dump()           - build the hex and ASCII dump
+  CaptureWorker(QThread)      - runs Scapy sniff in the background
+  PacketMonitorGUI(QMainWindow) - the main window
+
+Capture uses Scapy's sniff(). In the CLI it calls handle() for each packet. In
+the GUI a CaptureWorker thread runs sniff() so the window stays responsive and
+sends each packet back as a signal. Frames are not kept in memory during
+capture (store=False); they are only kept when exporting or clicking them.
 
 5. FILES
 --------------------------------------------------------------------------------
-  monitor.py        Main application (all logic)
-  requirements.txt  Python dependencies (scapy)
-  README.md         Setup and usage instructions
-  report.txt        This report
+  monitor.py                  Capture, decoding and CLI
+  gui.py                      PyQt6 desktop application
+  test_monitor.py             Tests for the decoders, exports, CLI and GUI
+  requirements.txt            Dependencies (scapy, PyQt6)
+  build.sh / build.bat        PyInstaller build for Linux/macOS and Windows
+  install_desktop_launcher.sh Adds the GUI to the Linux application menu
+  README.md                   Setup and usage instructions
+  report.txt                  This report
 
 6. HOW TO RUN
 --------------------------------------------------------------------------------
@@ -80,23 +130,52 @@ memory use low; packets are only buffered when --pcap output is requested.
 2) (Recommended) Install Npcap from https://npcap.com, enabling
    "WinPcap API-compatible Mode".
 3) Install dependencies:      pip install -r requirements.txt
-4) Open the terminal AS ADMINISTRATOR (live capture requires elevation).
+4) Open the terminal AS ADMINISTRATOR (live capture needs elevation).
+
+Graphical application:
+5) Run:                       python gui.py
+
+Command-line application:
 5) Run:                       python monitor.py
 
 Command-line options:
-  --iface NAME    capture on a specific interface (skips the picker)
-  --count N       stop after N packets (0 = until Ctrl+C)
-  --pcap FILE     save captured frames to a .pcap file
+  --iface NAME       capture on a specific interface (skips the picker)
+  -f, --filter EXPR  BPF capture filter (e.g. 'tcp port 80', 'udp', 'icmp')
+  --count N          stop after N packets (0 = until Ctrl+C)
+  --pcap FILE        save captured frames to a .pcap file
+  --json FILE        export parsed packet details to a .json file
+  --csv FILE         export parsed packet details to a .csv file
+  --import-json FILE import records from a .json file (offline mode)
+  --import-csv FILE  import records from a .csv file (offline mode)
 
 Examples:
   python monitor.py --count 20
-  python monitor.py --iface "Wi-Fi" --count 50
-  python monitor.py --pcap capture.pcap
+  python monitor.py --iface eth0 --filter "tcp port 80 or tcp port 443"
+  python monitor.py --count 50 --pcap capture.pcap --json capture.json --csv capture.csv
+  python monitor.py --import-csv capture.csv --json converted.json
+  python monitor.py --import-json capture.json --csv converted.csv
 
-Stop at any time with Ctrl+C; a statistics summary is printed on exit.
+Standalone build and desktop install:
+  ./build.sh                     Compile to dist/packet-monitor-gui
+  build.bat                      Compile to dist\packet-monitor-gui.exe (Windows)
+  ./install_desktop_launcher.sh  Add the app to the Linux application menu
+
+Stop the CLI with Ctrl+C; the GUI has Start and Stop buttons.
 
 7. SAMPLE OUTPUT
 --------------------------------------------------------------------------------
+Graphical application:
+  The top pane is the packet table:
+
+    No.  Time      Source            Destination       Protocol  Length  Summary
+    1    21:34:02  192.168.1.5:54321 8.8.8.8:443       TCP       84      192.168.1.5 > 8.8.8.8 ...
+    2    21:34:03  192.168.1.1      192.168.1.100     ARP       42      who has 192.168.1.100 ...
+
+  Clicking a row fills the lower panes with the layer tree and the hex dump:
+
+    0000   16 03 01 00 2c 01 00 00  ...   ....,...
+
+Command-line application:
   ============================================================
   Frame #1   [21:34:02]
   Ethernet: dst=00:1a:2b:3c:4d:5e  src=aa:bb:cc:dd:ee:ff  type=0x0800 (IPv4)
@@ -104,47 +183,55 @@ Stop at any time with Ctrl+C; a statistics summary is printed on exit.
      TCP : 54321 -> 443
      Payload (24 bytes): 16 03 01 00 2C 01 00 ...
 
-  When the layer-3 fallback is used, frames have no Ethernet header and are
-  shown as:  Layer 3 frame (no Ethernet header): <summary>
+  When the layer-3 fallback is used there is no Ethernet header and the frame
+  is shown as:  Layer 3 frame (no Ethernet header): <summary>
 
 8. TESTING AND VERIFICATION
 --------------------------------------------------------------------------------
-- Verified interface enumeration on a machine with 40 detected interfaces,
-  correctly reducing them to the adapters that own a real IPv4 address.
-- Verified the automatic selection of the active Wi-Fi adapter.
-- Verified graceful degradation: with Npcap absent, the program prints clear
-  instructions and attempts the native layer-3 socket rather than raising an
-  unhandled exception.
-- Handles an invalid bind address by retrying the capture on the default
-  adapter.
-- Verified IPv6 frames decode correctly, reading the hop-limit field (rather
-  than the IPv4 TTL) and recognising all ICMPv6 message types.
-- Verified that .pcap output can be written and read back (Wireshark format).
+- test_monitor.py (run with python -m unittest test_monitor.py) covers the
+  protocol decoders, the JSON and CSV exports and imports, the CLI arguments
+  and a GUI run on Qt's offscreen platform.
+- Interface listing was checked on a machine with 40 interfaces and correctly
+  kept only the ones with a real IPv4 address.
+- The active Wi-Fi adapter was picked as the default.
+- With Npcap removed the program printed the install instructions and tried the
+  native layer-3 socket instead of crashing.
+- An invalid bind address falls back to the default adapter.
+- IPv6 frames decode with the hop limit read from the right field, and the
+  ICMPv6 message types are recognised.
+- BPF filtering was checked, and a written .pcap opens again in Wireshark.
+- The GUI table, layer tree and hex view fill in correctly, and the .pcap,
+  .json and .csv exports and .pcap loading all work.
+- JSON and CSV captures were imported back and re-exported to the other formats
+  without losing the parsed fields.
 
 9. LIMITATIONS
 --------------------------------------------------------------------------------
-- Full Ethernet-frame capture requires Npcap; the layer-3 fallback exposes only
-  IP traffic (no MAC addresses) and still requires Administrator rights.
-- TCP payload data is not fully visible through the native Windows raw socket;
-  Npcap removes this limitation.
-- Wi-Fi adapters capture only traffic visible to the host; capturing all
-  traffic from other devices would require monitor mode.
+- Full Ethernet capture on Windows needs Npcap. The layer-3 fallback only sees
+  IP traffic (no MAC addresses) and still needs Administrator rights.
+- TCP payload is not fully visible through the native Windows raw socket; Npcap
+  fixes this.
+- A Wi-Fi adapter only sees the traffic the host sees. Capturing other devices'
+  traffic would need monitor mode.
+- The hex view shows the bytes but does not colour them per protocol.
 
 10. FUTURE WORK
 --------------------------------------------------------------------------------
-- A graphical user interface (GUI) for interface selection and live packet
-  display.
-- Filtering and search (e.g. by protocol, IP or port).
-- Export of statistics to CSV/JSON.
-- Colourised output and richer protocol decoding.
+- More protocol decoders (DNS, TLS handshake fields, and others).
+- Follow-stream and reassembly views.
+- Saved filter presets and colouring rules.
+- Charts for the protocol counts in the GUI.
+- A macOS build and signed Windows installers.
 
 11. CONCLUSION
 --------------------------------------------------------------------------------
-The project meets its goal of a compact, correct and user-friendly packet
-monitoring application.  It captures live traffic, explains each frame from
-Ethernet layer down to transport layer, summarises protocol usage, and can save
-captures for offline analysis.  It also handles the real-world case where Npcap
-is unavailable, degrading gracefully with clear guidance instead of failing.
-The clean single-file structure and function-based design make it a solid base
-for the planned GUI extension.
+The program does what it set out to do: it captures live traffic, explains each
+frame from the Ethernet layer down to the transport layer, counts the protocols
+it sees, and can filter, inspect, save and re-import captures. With the PyQt6
+interface, BPF filtering, the extra export formats and the Linux and macOS
+support, it is now both a desktop and a command-line tool rather than a single
+script. It also
+handles the case where Npcap is not installed by telling the user what to do
+instead of failing. The decoding code is shared between the two interfaces, so
+they stay in step.
 ================================================================================
