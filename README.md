@@ -1,33 +1,37 @@
 # Network Packet Monitoring and Ethernet Frame Analysis System
 
-A barebones packet sniffer that captures live network traffic and analyzes
+A lightweight, cross-platform packet sniffer that captures live network traffic and analyzes
 **Ethernet frames** (source/destination MAC, EtherType) along with the
-protocols inside them (ARP, IPv4/IPv6, TCP/UDP/ICMP). Captured frames can also
-be written to a `.pcap` file for later analysis in Wireshark.
+protocols inside them (ARP, IPv4/IPv6, TCP/UDP/ICMP). Captured frames can be filtered using
+Berkeley Packet Filters (BPF) and exported to `.pcap` (Wireshark), `.json`, and `.csv` formats.
 
-Built with Python 3 + [Scapy](https://scapy.net/) on Windows 11.
+Built with Python 3 + [Scapy](https://scapy.net/). Cross-platform support across Linux, macOS, and Windows.
 
 ---
 
 ## 1. Setup
 
-### Step 1 - Install Python 3
-Download from <https://www.python.org/downloads/> and **check "Add Python to PATH"**
-during installation. Verify in a new Git Bash window:
+### Step 1 - Python 3
+Ensure Python 3 is installed:
 
 ```bash
-python --version
+python --version   # or python3 --version
 ```
 
-### Step 2 - Install Npcap (recommended for capturing)
-Download from <https://npcap.com/#download> and install it. **During setup, check
-"Install Npcap in WinPcap API-compatible Mode".** Npcap gives Scapy full
-layer-2 capture on Windows (Ethernet headers, ARP, etc.). Without it the program
-still runs by falling back to Scapy's native layer-3 socket, but only IP traffic
-is captured and no Ethernet header is shown.
+### Step 2 - Capture Drivers & Privileges
 
-### Step 3 - Install dependencies
-From this project folder:
+- **Linux**:
+  Scapy uses native Linux PF_PACKET sockets for layer-2 capture out of the box. No extra drivers needed. Live capture requires root or raw socket capabilities:
+  ```bash
+  sudo python monitor.py
+  ```
+- **Windows**:
+  Download and install [Npcap](https://npcap.com/#download). During installation, check **"Install Npcap in WinPcap API-compatible Mode"** for full layer-2 capture. Run your terminal as Administrator.
+- **macOS**:
+  Captures via `/dev/bpf*` devices; run using `sudo python monitor.py`.
+
+### Step 3 - Install Dependencies
+From the project folder:
 
 ```bash
 pip install -r requirements.txt
@@ -37,39 +41,50 @@ pip install -r requirements.txt
 
 ## 2. Running
 
-> **Run your terminal as Administrator.** Live packet capture on Windows needs
-> elevated privileges. In Git Bash this means opening it via
-> *right-click -> Run as administrator* before running the commands below.
+> **Elevated privileges are required for packet capture:**
+> - On Linux / macOS: Use `sudo python monitor.py`
+> - On Windows: Open Git Bash or Command Prompt as **Administrator**.
 
 ```bash
 python monitor.py
 ```
 
 If you do not pass `--iface`, the program lists the usable capture interfaces
-(adapter name + IPv4) and asks you to pick a number. The active/default adapter
-is marked and selected when you just press **Enter**.
+and asks you to select one. The active/default adapter is marked and selected
+when you press **Enter**.
 
 ### Options
 
-| Flag             | Description                                         |
-|------------------|-----------------------------------------------------|
-| `--iface NAME`   | Capture on this interface (skips the picker)        |
-| `--count N`      | Stop after `N` packets (default `0` = until Ctrl+C) |
-| `--pcap FILE`    | Save captured frames to a `.pcap` file              |
+| Flag | Short | Description |
+|------|-------|-------------|
+| `--iface NAME` | | Capture on a specific interface (skips interface picker) |
+| `--filter EXPR` | `-f` | BPF filter expression (e.g. `'tcp port 80'`, `'udp'`, `'icmp'`) |
+| `--count N` | | Stop capture after `N` packets (default `0` = until Ctrl+C) |
+| `--pcap FILE` | | Save raw captured frames to a `.pcap` file |
+| `--json FILE` | | Export parsed packet metadata and layers to a `.json` file |
+| `--csv FILE` | | Export structured packet details to a `.csv` spreadsheet |
 
 ### Examples
 
 ```bash
+# Capture 20 packets on active default adapter
 python monitor.py --count 20
-python monitor.py --iface "Wi-Fi" --count 50
-python monitor.py --pcap capture.pcap
+
+# Capture only HTTP/HTTPS traffic on eth0 or Wi-Fi
+python monitor.py --iface eth0 --filter "tcp port 80 or tcp port 443"
+
+# Capture and export to PCAP, JSON, and CSV simultaneously
+python monitor.py --count 50 --pcap capture.pcap --json capture.json --csv capture.csv
+
+# Capture only DNS queries and responses
+python monitor.py --filter "udp port 53"
 ```
 
-Press **Ctrl+C** to stop at any time - a statistics summary is printed on exit.
+Press **Ctrl+C** to stop at any time - capture statistics and exported files are saved cleanly upon exit.
 
 ---
 
-## 3. Understanding the output
+## 3. Understanding the Output
 
 ```
 ============================================================
@@ -86,26 +101,25 @@ Ethernet: dst=00:1a:2b:3c:4d:5e  src=aa:bb:cc:dd:ee:ff  type=0x0800 (IPv4)
 | `type` | EtherType - identifies the payload (0x0800 = IPv4, 0x0806 = ARP, 0x86DD = IPv6, 0x8100 = VLAN) |
 | `IPv4/IPv6` | Network layer source/destination IP, TTL, protocol number, length |
 | `TCP/UDP` | Transport layer source/destination ports |
-| `ICMP` | type/code (e.g. ping) |
-| `Payload` | First 32 bytes of raw data in hexadecimal |
+| `ICMP` | Type and code (e.g. echo request/reply) |
+| `Payload` | First 32 bytes of raw data in hexadecimal preview |
 
-When running without Npcap, frames arrive without an Ethernet header and are
-shown as `Layer 3 frame (no Ethernet header)` with the IP details underneath.
-
-On **Ctrl+C** a summary is printed showing counts of total frames and each
-protocol observed.
+On **Ctrl+C**, a summary table is printed showing total frames and counts per protocol observed.
 
 ---
 
-## 4. Notes and limitations
+## 4. Running Tests
 
-- **Administrator rights are required.** Always start your terminal as
-  Administrator or capture will fail/return nothing.
-- **Npcap is recommended.** With Npcap installed you get full layer-2 capture
-  (Ethernet headers, ARP, etc.). Without it, the program automatically falls back
-  to Scapy's native layer-3 socket, which still captures IP traffic but exposes
-  **no Ethernet header** (and still requires Administrator).
-- **Ethernet headers are only visible on real Npcap-backed interfaces.** The
-  loopback adapter and the layer-3 fallback may not show an Ethernet header.
-- Wi-Fi adapters usually need to be in normal (managed) mode to capture your own
-  traffic; capturing *all* traffic from other devices requires monitor mode.
+The test suite validates record extraction across protocols, JSON/CSV exports, and CLI argument parsing:
+
+```bash
+python -m unittest test_monitor.py
+```
+
+---
+
+## 5. Notes and Limitations
+
+- **Elevated Privileges**: Capturing raw network traffic requires root privileges (`sudo`) on Linux/macOS or Administrator privileges on Windows.
+- **Windows Layer 2 vs Layer 3**: On Windows, Npcap provides full Ethernet layer-2 capture. Without Npcap, Scapy falls back to its layer-3 socket (IP traffic only, no Ethernet headers). On Linux, layer-2 is supported natively via PF_PACKET.
+- **Wi-Fi Promiscuous Mode**: Wi-Fi adapters in managed mode capture host traffic. Capturing promiscuous traffic from other devices on the WLAN requires monitor mode.
