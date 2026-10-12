@@ -79,6 +79,7 @@ class TestMonitorEnhancements(unittest.TestCase):
 
     def test_cli_parsing(self):
         import sys
+        import argparse
         old_argv = sys.argv
         try:
             sys.argv = [
@@ -90,10 +91,6 @@ class TestMonitorEnhancements(unittest.TestCase):
                 "--csv", "out.csv",
                 "--pcap", "out.pcap"
             ]
-            import argparse
-            # test that arguments parse without error
-            from monitor import main
-            # We can parse manually to ensure arguments exist
             parser = argparse.ArgumentParser()
             parser.add_argument("--iface")
             parser.add_argument("-f", "--filter")
@@ -110,6 +107,34 @@ class TestMonitorEnhancements(unittest.TestCase):
             self.assertEqual(args.pcap, "out.pcap")
         finally:
             sys.argv = old_argv
+
+
+class TestGUI(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        os.environ["QT_QPA_PLATFORM"] = "offscreen"
+
+    def test_gui_headless_flow(self):
+        from PyQt6.QtWidgets import QApplication
+        import gui
+
+        app = QApplication.instance() or QApplication([])
+        win = gui.PacketMonitorGUI()
+        self.assertEqual(win.table.rowCount(), 0)
+
+        pkt = Ether() / IP(src="1.2.3.4", dst="5.6.7.8") / TCP(sport=80, dport=443) / Raw(b"PING PONG")
+        rec = monitor.extract_record(1, pkt)
+        win._on_packet_captured(pkt, rec)
+        self.assertEqual(win.table.rowCount(), 1)
+
+        win.table.selectRow(0)
+        self.assertTrue(win.detail_tree.topLevelItemCount() > 0)
+        self.assertIn("PING PONG", win.hex_view.toPlainText())
+
+        win.clear_capture()
+        self.assertEqual(win.table.rowCount(), 0)
+        self.assertEqual(len(win.captured_packets), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

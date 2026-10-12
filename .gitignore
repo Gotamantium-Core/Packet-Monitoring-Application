@@ -3,3 +3,8 @@ __pycache__/
 .venv/
 venv/
 *.pcap
+build/
+dist/
+*.spec
+capture.json
+capture.csv
