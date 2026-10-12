@@ -1,7 +1,7 @@
 # Network Packet Monitoring and Ethernet Frame Analysis System
 
 A lightweight, cross-platform packet sniffer and frame analyzer that captures live network traffic and dissects
-**Ethernet frames** (MAC addresses, EtherType) along with network and transport layer protocols (ARP, IPv4/IPv6, TCP/UDP/ICMP).
+**Ethernet frames** (MAC addresses, EtherType) along with network and transport layer protocols (ARP, IPv4/IPv6, TCP/UDP/ICMP/ICMPv6).
 
 Supports both **CLI** (`monitor.py`) and a modern **Dark-Themed GUI** (`gui.py`) with real-time inspection, BPF capture filtering, PCAP file viewing, and exports to `.pcap` (Wireshark), `.json`, and `.csv`.
 
@@ -16,7 +16,8 @@ Supports both **CLI** (`monitor.py`) and a modern **Dark-Themed GUI** (`gui.py`)
   - Wireshark-style 16-byte Hex & ASCII payload viewer.
   - Quick-search filter bar for instant table filtering.
   - Offline `.pcap` file loader (inspect captures without elevated privileges).
-- **BPF Filtering**: Filter packets at capture time using standard Berkeley Packet Filter expressions (e.g. `tcp port 80`, `udp`, `icmp`).
+- **BPF Filtering**: Filter packets at capture time using standard Berkeley Packet Filter expressions (e.g. `tcp port 80`, `udp`, `icmp`, `icmp6`).
+- **IPv6-Aware Decoding**: IPv6 hop limit and any ICMPv6 subtype (echo, neighbor discovery, router advertisement, ...) are decoded and labeled correctly.
 - **Flexible Exports**: One-click export to PCAP, structured JSON, and CSV.
 - **Cross-Platform**: Runs natively on Linux (native `PF_PACKET` sockets), Windows (Npcap), and macOS.
 - **Standalone Executable**: Single-file binary compilation via PyInstaller (no Python runtime required).

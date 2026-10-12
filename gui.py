@@ -180,6 +180,7 @@ PROTOCOL_COLORS = {
     "TCP": QColor("#38bdf8"),
     "UDP": QColor("#fbbf24"),
     "ICMP": QColor("#e879f9"),
+    "ICMPv6": QColor("#e879f9"),
     "ARP": QColor("#34d399"),
     "IPv4": QColor("#93c5fd"),
     "IPv6": QColor("#c084fc"),

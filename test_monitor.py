@@ -40,7 +40,7 @@ class TestMonitorEnhancements(unittest.TestCase):
         self.assertEqual(rec["dst_ip"], "192.168.1.100")
 
     def test_extract_record_ipv6_udp(self):
-        pkt = Ether() / IPv6(src="2001:db8::1", dst="2001:db8::2") / UDP(sport=5353, dport=5353)
+        pkt = Ether(src="00:11:22:33:44:55", dst="00:11:22:33:44:66") / IPv6(src="2001:db8::1", dst="2001:db8::2") / UDP(sport=5353, dport=5353)
         rec = monitor.extract_record(3, pkt)
         self.assertEqual(rec["protocol"], "UDP")
         self.assertEqual(rec["src_ip"], "2001:db8::1")

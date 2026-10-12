@@ -20,6 +20,7 @@ from collections import Counter
 from datetime import datetime
 
 from scapy.all import conf, get_if_list, sniff, wrpcap
+from scapy.layers import inet6 as _inet6
 from scapy.layers.l2 import ARP, Ether
 from scapy.layers.inet import ICMP, IP, TCP, UDP
 from scapy.layers.inet6 import IPv6
@@ -31,6 +32,13 @@ ETH_TYPES = {
     0x86DD: "IPv6",
     0x8100: "VLAN",
 }
+
+# Scapy versions differ: some expose a public ``ICMPv6`` base class, others only
+# the private ``_ICMPv6``. ``haslayer`` matches exact classes, so gather every
+# known base to detect any ICMPv6 subtype via ``isinstance``.
+_ICMPV6_BASES = tuple(
+    cls for cls in (getattr(_inet6, "ICMPv6", None), getattr(_inet6, "_ICMPv6", None)) if cls is not None
+)
 
 stats = Counter()
 frame_no = 0
@@ -160,6 +168,16 @@ def describe_arp(arp):
     print(f"   ARP : {op}  who-has {arp.pdst} tell {arp.psrc}")
 
 
+def find_icmpv6(pkt):
+    """Return the ICMPv6 layer of a packet, if any (any Scapy version)."""
+    layer = pkt
+    while layer is not None:
+        if _ICMPV6_BASES and isinstance(layer, _ICMPV6_BASES):
+            return layer
+        layer = getattr(layer, "payload", None)
+    return None
+
+
 def describe_ip(pkt, ip):
     version = "IPv6" if isinstance(ip, IPv6) else "IPv4"
     proto = getattr(ip, "nh", getattr(ip, "proto", "?"))
@@ -170,9 +188,11 @@ def describe_ip(pkt, ip):
     elif ip.haslayer(ICMP):
         transport = f"ICMP: type={ip[ICMP].type} code={ip[ICMP].code}"
     else:
-        transport = "no TCP/UDP/ICMP"
+        icmpv6 = find_icmpv6(pkt)
+        transport = f"ICMPv6: type={icmpv6.type} code={icmpv6.code}" if icmpv6 is not None else "no TCP/UDP/ICMP"
+    ttl = getattr(ip, "ttl", getattr(ip, "hlim", "?"))
     length = getattr(ip, "len", getattr(ip, "plen", "?"))
-    print(f"   {version}: {ip.src} -> {ip.dst}  ttl={ip.ttl} proto={proto} len={length}")
+    print(f"   {version}: {ip.src} -> {ip.dst}  ttl={ttl} proto={proto} len={length}")
     print(f"   {transport}")
 
 
@@ -237,8 +257,8 @@ def extract_record(frame_index, pkt):
             proto_name = "UDP"
             src_port = ipv6[UDP].sport
             dst_port = ipv6[UDP].dport
-        elif ipv6.haslayer(ICMP):
-            proto_name = "ICMP"
+        elif find_icmpv6(ipv6) is not None:
+            proto_name = "ICMPv6"
     elif eth:
         proto_name = eth_type_name or "Ethernet"
 

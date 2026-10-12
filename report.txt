@@ -9,7 +9,7 @@ This project is a lightweight network packet monitoring tool that captures live
 network traffic and analyses the Ethernet frames and the protocols carried
 inside them.  For every captured frame it prints the source/destination MAC
 addresses and EtherType, then drills into the payload to describe ARP, IPv4,
-IPv6, TCP, UDP and ICMP.  Captured frames can also be written to a .pcap file so
+IPv6, TCP, UDP, ICMP and ICMPv6.  Captured frames can also be written to a .pcap file so
 they can be opened later in Wireshark.  It is a command-line application written
 in Python 3 using the Scapy packet-manipulation library, developed and tested on
 Windows 11.
@@ -33,8 +33,8 @@ Windows 11.
 - Live, human-readable per-frame output.
 - Layer-2 (Ethernet) analysis: MAC addresses and EtherType
   (IPv4 / ARP / IPv6 / VLAN).
-- Layer-3/Layer-4 analysis: IPv4/IPv6 source and destination, TTL, protocol,
-  length; TCP/UDP ports; ICMP type and code.
+- Layer-3/Layer-4 analysis: IPv4/IPv6 source and destination, TTL/hop limit,
+  protocol, length; TCP/UDP ports; ICMP and ICMPv6 type and code.
 - Raw payload preview, shown as the first 32 bytes in hexadecimal.
 - Per-protocol capture statistics printed on exit.
 - Optional .pcap export of all captured frames.
@@ -55,7 +55,8 @@ into small functions:
   iface_ipv4() / is_usable()  - filter out adapters without a real IPv4 address
   describe_ethernet()         - prints MAC source/destination and EtherType
   describe_arp()              - prints ARP request/reply details
-  describe_ip()               - prints IP and TCP/UDP/ICMP details
+  describe_ip()               - prints IP and TCP/UDP/ICMP/ICMPv6 details
+  find_icmpv6()               - locates any ICMPv6 layer across Scapy versions
   describe_payload()          - prints a hex preview of raw data
   handle()                    - callback invoked for every captured packet
   print_stats()               - prints the final protocol summary
@@ -116,6 +117,8 @@ Stop at any time with Ctrl+C; a statistics summary is printed on exit.
   unhandled exception.
 - Handles an invalid bind address by retrying the capture on the default
   adapter.
+- Verified IPv6 frames decode correctly, reading the hop-limit field (rather
+  than the IPv4 TTL) and recognising all ICMPv6 message types.
 - Verified that .pcap output can be written and read back (Wireshark format).
 
 9. LIMITATIONS
