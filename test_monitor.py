@@ -71,11 +71,58 @@ class TestMonitorEnhancements(unittest.TestCase):
             self.assertEqual(len(reader), 1)
             self.assertEqual(reader[0]["protocol"], "ICMP")
             self.assertEqual(reader[0]["src_ip"], "10.0.0.1")
+
+            # Test importing back
+            imported_json = monitor.import_json(json_file)
+            self.assertEqual(len(imported_json), 1)
+            self.assertEqual(imported_json[0]["protocol"], "ICMP")
+            self.assertEqual(imported_json[0]["src_ip"], "10.0.0.1")
+
+            imported_csv = monitor.import_csv(csv_file)
+            self.assertEqual(len(imported_csv), 1)
+            self.assertEqual(imported_csv[0]["protocol"], "ICMP")
+            self.assertEqual(imported_csv[0]["src_ip"], "10.0.0.1")
         finally:
             if os.path.exists(json_file):
                 os.remove(json_file)
             if os.path.exists(csv_file):
                 os.remove(csv_file)
+
+    def test_record_to_packet(self):
+        # TCP packet
+        rec_tcp = {
+            "frame_no": 1,
+            "eth_src": "aa:bb:cc:dd:ee:ff",
+            "eth_dst": "00:11:22:33:44:55",
+            "eth_type": "0x0800",
+            "protocol": "TCP",
+            "src_ip": "192.168.1.10",
+            "dst_ip": "1.1.1.1",
+            "src_port": "12345",
+            "dst_port": "80",
+            "ttl": "64",
+            "payload_preview": "47 45 54 20",
+        }
+        pkt = monitor.record_to_packet(rec_tcp)
+        self.assertIsNotNone(pkt)
+        self.assertTrue(pkt.haslayer(Ether))
+        self.assertTrue(pkt.haslayer(IP))
+        self.assertTrue(pkt.haslayer(TCP))
+        self.assertEqual(pkt[TCP].dport, 80)
+        self.assertEqual(pkt[TCP].sport, 12345)
+        self.assertTrue(pkt.haslayer(Raw))
+        self.assertEqual(bytes(pkt[Raw].load), b"GET ")
+
+        # ARP packet
+        rec_arp = {
+            "protocol": "ARP",
+            "src_ip": "192.168.1.1",
+            "dst_ip": "192.168.1.100",
+        }
+        pkt_arp = monitor.record_to_packet(rec_arp)
+        self.assertIsNotNone(pkt_arp)
+        self.assertTrue(pkt_arp.haslayer(ARP))
+        self.assertEqual(pkt_arp[ARP].psrc, "192.168.1.1")
 
     def test_cli_parsing(self):
         import sys
@@ -89,7 +136,9 @@ class TestMonitorEnhancements(unittest.TestCase):
                 "--count", "10",
                 "--json", "out.json",
                 "--csv", "out.csv",
-                "--pcap", "out.pcap"
+                "--pcap", "out.pcap",
+                "--import-json", "in.json",
+                "--import-csv", "in.csv"
             ]
             parser = argparse.ArgumentParser()
             parser.add_argument("--iface")
@@ -98,6 +147,8 @@ class TestMonitorEnhancements(unittest.TestCase):
             parser.add_argument("--pcap")
             parser.add_argument("--json", dest="json_path")
             parser.add_argument("--csv", dest="csv_path")
+            parser.add_argument("--import-json", dest="import_json_path")
+            parser.add_argument("--import-csv", dest="import_csv_path")
             args = parser.parse_args(sys.argv[1:])
             self.assertEqual(args.iface, "lo")
             self.assertEqual(args.filter, "tcp port 80")
@@ -105,6 +156,8 @@ class TestMonitorEnhancements(unittest.TestCase):
             self.assertEqual(args.json_path, "out.json")
             self.assertEqual(args.csv_path, "out.csv")
             self.assertEqual(args.pcap, "out.pcap")
+            self.assertEqual(args.import_json_path, "in.json")
+            self.assertEqual(args.import_csv_path, "in.csv")
         finally:
             sys.argv = old_argv
 
@@ -135,6 +188,47 @@ class TestGUI(unittest.TestCase):
         self.assertEqual(win.table.rowCount(), 0)
         self.assertEqual(len(win.captured_packets), 0)
 
+    def test_gui_import_record_flow(self):
+        from PyQt6.QtWidgets import QApplication
+        import gui
+
+        app = QApplication.instance() or QApplication([])
+        win = gui.PacketMonitorGUI()
+
+        record = {
+            "frame_no": 42,
+            "timestamp": "2026-10-12 11:00:00",
+            "eth_src": "11:22:33:44:55:66",
+            "eth_dst": "aa:bb:cc:dd:ee:ff",
+            "eth_type": "0x0800",
+            "eth_type_name": "IPv4",
+            "protocol": "UDP",
+            "src_ip": "10.0.0.1",
+            "dst_ip": "10.0.0.2",
+            "src_port": "53",
+            "dst_port": "5353",
+            "ttl": "128",
+            "length": 60,
+            "payload_bytes": 4,
+            "payload_preview": "01 02 03 04",
+            "summary": "Ether / IP / UDP 10.0.0.1:53 > 10.0.0.2:5353",
+        }
+
+        pkt = monitor.record_to_packet(record)
+        win._on_packet_captured(pkt, record)
+        self.assertEqual(win.table.rowCount(), 1)
+
+        win.table.selectRow(0)
+        self.assertTrue(win.detail_tree.topLevelItemCount() > 0)
+        self.assertIn("01 02 03 04", win.hex_view.toPlainText())
+
+        # Test selecting row when packet is None (record fallback)
+        win._on_packet_captured(None, record)
+        self.assertEqual(win.table.rowCount(), 2)
+        win.table.selectRow(1)
+        self.assertTrue(win.detail_tree.topLevelItemCount() > 0)
+
 
 if __name__ == "__main__":
     unittest.main()
+
