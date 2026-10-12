@@ -400,6 +400,14 @@ class PacketMonitorGUI(QMainWindow):
         open_pcap_act.triggered.connect(self.open_pcap)
         file_menu.addAction(open_pcap_act)
 
+        open_json_act = QAction("Import JSON...", self)
+        open_json_act.triggered.connect(self.open_json)
+        file_menu.addAction(open_json_act)
+
+        open_csv_act = QAction("Import CSV...", self)
+        open_csv_act.triggered.connect(self.open_csv)
+        file_menu.addAction(open_csv_act)
+
         file_menu.addSeparator()
 
         save_pcap_act = QAction("Export to PCAP...", self)
@@ -520,24 +528,28 @@ class PacketMonitorGUI(QMainWindow):
         row = self.table.rowCount()
         self.table.insertRow(row)
 
-        src = record["src_ip"] or record["eth_src"]
-        dst = record["dst_ip"] or record["eth_dst"]
-        if record["src_port"]:
+        src = str(record.get("src_ip", "") or record.get("eth_src", ""))
+        dst = str(record.get("dst_ip", "") or record.get("eth_dst", ""))
+        if record.get("src_port"):
             src += f":{record['src_port']}"
-        if record["dst_port"]:
+        if record.get("dst_port"):
             dst += f":{record['dst_port']}"
 
+        ts_text = str(record.get("timestamp", ""))
+        if " " in ts_text:
+            ts_text = ts_text.split(" ")[-1]
+
         items = [
-            QTableWidgetItem(str(record["frame_no"])),
-            QTableWidgetItem(record["timestamp"].split(" ")[-1]),
+            QTableWidgetItem(str(record.get("frame_no", ""))),
+            QTableWidgetItem(ts_text),
             QTableWidgetItem(src),
             QTableWidgetItem(dst),
-            QTableWidgetItem(record["protocol"]),
-            QTableWidgetItem(str(record["length"])),
-            QTableWidgetItem(record["summary"]),
+            QTableWidgetItem(str(record.get("protocol", "Unknown"))),
+            QTableWidgetItem(str(record.get("length", ""))),
+            QTableWidgetItem(str(record.get("summary", ""))),
         ]
 
-        color = PROTOCOL_COLORS.get(record["protocol"])
+        color = PROTOCOL_COLORS.get(record.get("protocol"))
         if color:
             items[4].setForeground(color)
 
@@ -545,7 +557,7 @@ class PacketMonitorGUI(QMainWindow):
             it.setFlags(it.flags() ^ Qt.ItemFlag.ItemIsEditable)
             self.table.setItem(row, col, it)
 
-        self.packet_count_label.setText(f"Packets: {len(self.captured_packets)}")
+        self.packet_count_label.setText(f"Packets: {len(self.captured_records)}")
 
         if self.auto_scroll_cb.isChecked():
             self.table.scrollToBottom()
@@ -555,9 +567,12 @@ class PacketMonitorGUI(QMainWindow):
         if not selected:
             return
         row = selected[0].row()
-        if 0 <= row < len(self.captured_packets):
-            pkt = self.captured_packets[row]
+        pkt = self.captured_packets[row] if 0 <= row < len(self.captured_packets) else None
+        rec = self.captured_records[row] if 0 <= row < len(self.captured_records) else None
+        if pkt:
             self._display_packet_details(pkt)
+        elif rec:
+            self._display_record_details(rec)
 
     def _display_packet_details(self, pkt: Packet):
         self.detail_tree.clear()
@@ -579,6 +594,52 @@ class PacketMonitorGUI(QMainWindow):
         # Format Hex Dump
         raw_bytes = bytes(pkt)
         self.hex_view.setPlainText(format_hex_dump(raw_bytes))
+
+    def _display_record_details(self, record: dict):
+        self.detail_tree.clear()
+
+        # Frame item
+        frame_item = QTreeWidgetItem(self.detail_tree, [f"Frame #{record.get('frame_no', '?')}", ""])
+        frame_item.setExpanded(True)
+        for k in ["frame_no", "timestamp", "protocol", "length", "summary"]:
+            if record.get(k) is not None:
+                QTreeWidgetItem(frame_item, [k, str(record.get(k))])
+
+        # Ethernet item
+        if record.get("eth_src") or record.get("eth_dst") or record.get("eth_type"):
+            eth_item = QTreeWidgetItem(self.detail_tree, ["Ethernet", ""])
+            eth_item.setExpanded(True)
+            for k in ["eth_src", "eth_dst", "eth_type", "eth_type_name"]:
+                if record.get(k):
+                    QTreeWidgetItem(eth_item, [k, str(record.get(k))])
+
+        # Network/Transport item
+        proto_name = str(record.get("protocol") or "Network")
+        net_item = QTreeWidgetItem(self.detail_tree, [proto_name, ""])
+        net_item.setExpanded(True)
+        for k in ["src_ip", "dst_ip", "src_port", "dst_port", "ttl"]:
+            if record.get(k):
+                QTreeWidgetItem(net_item, [k, str(record.get(k))])
+
+        # Payload item
+        if record.get("payload_bytes") or record.get("payload_preview"):
+            payload_item = QTreeWidgetItem(self.detail_tree, ["Payload", ""])
+            payload_item.setExpanded(True)
+            for k in ["payload_bytes", "payload_preview"]:
+                if record.get(k):
+                    QTreeWidgetItem(payload_item, [k, str(record.get(k))])
+
+        # Hex view
+        preview = record.get("payload_preview", "")
+        if preview:
+            clean_hex = str(preview).replace("...", "").strip()
+            try:
+                raw_bytes = bytes.fromhex(clean_hex)
+                self.hex_view.setPlainText(format_hex_dump(raw_bytes))
+            except Exception:
+                self.hex_view.setPlainText(str(preview))
+        else:
+            self.hex_view.setPlainText("[No payload preserved in imported record]")
 
     def _filter_table_view(self, text: str):
         query = text.strip().lower()
@@ -614,16 +675,45 @@ class PacketMonitorGUI(QMainWindow):
         except Exception as exc:
             QMessageBox.critical(self, "Error Opening PCAP", f"Failed to load file: {exc}")
 
+    def open_json(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Import JSON File", "", "JSON Files (*.json);;All Files (*)")
+        if not path:
+            return
+        try:
+            records = monitor.import_json(path)
+            self.clear_capture()
+            for r in records:
+                pkt = monitor.record_to_packet(r)
+                self._on_packet_captured(pkt, r)
+            self.status_label.setText(f"Imported {len(records)} records from {os.path.basename(path)}")
+        except Exception as exc:
+            QMessageBox.critical(self, "Error Importing JSON", f"Failed to import file: {exc}")
+
+    def open_csv(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Import CSV File", "", "CSV Files (*.csv);;All Files (*)")
+        if not path:
+            return
+        try:
+            records = monitor.import_csv(path)
+            self.clear_capture()
+            for r in records:
+                pkt = monitor.record_to_packet(r)
+                self._on_packet_captured(pkt, r)
+            self.status_label.setText(f"Imported {len(records)} records from {os.path.basename(path)}")
+        except Exception as exc:
+            QMessageBox.critical(self, "Error Importing CSV", f"Failed to import file: {exc}")
+
     def export_pcap(self):
-        if not self.captured_packets:
-            QMessageBox.information(self, "Export PCAP", "No packets captured to export.")
+        valid_packets = [p for p in self.captured_packets if p is not None]
+        if not valid_packets:
+            QMessageBox.information(self, "Export PCAP", "No packets captured or available to export.")
             return
         path, _ = QFileDialog.getSaveFileName(self, "Export PCAP", "capture.pcap", "PCAP Files (*.pcap);;All Files (*)")
         if not path:
             return
         try:
-            wrpcap(path, self.captured_packets)
-            QMessageBox.information(self, "Export Successful", f"Saved {len(self.captured_packets)} frames to {path}")
+            wrpcap(path, valid_packets)
+            QMessageBox.information(self, "Export Successful", f"Saved {len(valid_packets)} frames to {path}")
         except Exception as exc:
             QMessageBox.critical(self, "Export Failed", f"Could not save PCAP: {exc}")
 
@@ -657,7 +747,7 @@ class PacketMonitorGUI(QMainWindow):
             "<ul>"
             "<li>Live Layer-2 & Layer-3 packet capture</li>"
             "<li>BPF syntax filtering</li>"
-            "<li>Multi-format export: PCAP, JSON, CSV</li>"
+            "<li>Import & Export: PCAP, JSON, CSV</li>"
             "<li>Protocol dissection tree and hex viewer</li>"
             "</ul>",
         )

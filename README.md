@@ -15,10 +15,10 @@ Supports both **CLI** (`monitor.py`) and a modern **Dark-Themed GUI** (`gui.py`)
   - Hierarchical layer and field inspection tree.
   - Wireshark-style 16-byte Hex & ASCII payload viewer.
   - Quick-search filter bar for instant table filtering.
-  - Offline `.pcap` file loader (inspect captures without elevated privileges).
+  - Offline capture loader: inspect PCAP, JSON, and CSV captures without elevated privileges.
 - **BPF Filtering**: Filter packets at capture time using standard Berkeley Packet Filter expressions (e.g. `tcp port 80`, `udp`, `icmp`, `icmp6`).
 - **IPv6-Aware Decoding**: IPv6 hop limit and any ICMPv6 subtype (echo, neighbor discovery, router advertisement, ...) are decoded and labeled correctly.
-- **Flexible Exports**: One-click export to PCAP, structured JSON, and CSV.
+- **Flexible Imports & Exports**: One-click import and export for PCAP (`.pcap`), structured JSON (`.json`), and CSV (`.csv`).
 - **Cross-Platform**: Runs natively on Linux (native `PF_PACKET` sockets), Windows (Npcap), and macOS.
 - **Standalone Executable**: Single-file binary compilation via PyInstaller (no Python runtime required).
 
@@ -86,6 +86,8 @@ python monitor.py
 | `--pcap FILE` | | Save raw captured frames to a `.pcap` file |
 | `--json FILE` | | Export parsed packet metadata to a `.json` file |
 | `--csv FILE` | | Export structured packet details to a `.csv` file |
+| `--import-json FILE` | | Import and inspect packet records from a `.json` file |
+| `--import-csv FILE` | | Import and inspect packet records from a `.csv` file |
 
 #### CLI Examples
 
@@ -98,6 +100,10 @@ python monitor.py --iface eth0 --filter "tcp port 80 or tcp port 443"
 
 # Capture and export to PCAP, JSON, and CSV simultaneously
 python monitor.py --count 50 --pcap capture.pcap --json capture.json --csv capture.csv
+
+# Import an existing JSON or CSV capture offline and re-export to other formats
+python monitor.py --import-json capture.json --csv converted.csv
+python monitor.py --import-csv capture.csv --pcap converted.pcap
 ```
 
 ---

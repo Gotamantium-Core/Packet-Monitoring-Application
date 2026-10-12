@@ -8,6 +8,8 @@ Usage:
     python monitor.py --pcap capture.pcap # also save frames to a pcap file
     python monitor.py --json capture.json # export packet details to JSON
     python monitor.py --csv capture.csv   # export packet details to CSV
+    python monitor.py --import-json file  # import and inspect records from JSON
+    python monitor.py --import-csv file   # import and inspect records from CSV
 """
 
 import argparse
@@ -374,6 +376,160 @@ def export_csv(filepath, records):
         print(f"Error saving CSV export to {filepath}: {err}", file=sys.stderr)
 
 
+def import_json(filepath):
+    """Read packet records from a JSON file."""
+    with open(filepath, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if isinstance(data, list):
+        return data
+    elif isinstance(data, dict):
+        return [data]
+    else:
+        raise ValueError(f"Invalid JSON format in {filepath}: expected a list of records")
+
+
+def import_csv(filepath):
+    """Read packet records from a CSV file."""
+    records = []
+    with open(filepath, "r", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            rec = dict(row)
+            if "frame_no" in rec and rec["frame_no"].isdigit():
+                rec["frame_no"] = int(rec["frame_no"])
+            if "length" in rec and rec["length"].isdigit():
+                rec["length"] = int(rec["length"])
+            if "payload_bytes" in rec and rec["payload_bytes"].isdigit():
+                rec["payload_bytes"] = int(rec["payload_bytes"])
+            records.append(rec)
+    return records
+
+
+def record_to_packet(record):
+    """Attempt to reconstruct a Scapy packet object from an exported record dictionary."""
+    try:
+        eth_src = record.get("eth_src") or "00:00:00:00:00:00"
+        eth_dst = record.get("eth_dst") or "00:00:00:00:00:00"
+        eth_type_raw = record.get("eth_type")
+
+        eth = Ether(src=eth_src, dst=eth_dst)
+        if eth_type_raw:
+            try:
+                eth.type = int(str(eth_type_raw), 16) if str(eth_type_raw).startswith("0x") else int(eth_type_raw)
+            except Exception:
+                pass
+
+        proto = (record.get("protocol") or "").upper()
+        pkt = eth
+
+        if proto == "ARP":
+            arp = ARP()
+            if record.get("src_ip"):
+                arp.psrc = record.get("src_ip")
+            if record.get("dst_ip"):
+                arp.pdst = record.get("dst_ip")
+            pkt = pkt / arp
+        elif "IPV6" in proto or (record.get("src_ip") and ":" in str(record.get("src_ip"))):
+            ip6 = IPv6()
+            if record.get("src_ip"):
+                ip6.src = str(record["src_ip"])
+            if record.get("dst_ip"):
+                ip6.dst = str(record["dst_ip"])
+            if record.get("ttl"):
+                try:
+                    ip6.hlim = int(record["ttl"])
+                except Exception:
+                    pass
+            pkt = pkt / ip6
+            if proto == "TCP":
+                tcp = TCP()
+                if record.get("src_port"):
+                    try:
+                        tcp.sport = int(record["src_port"])
+                    except Exception:
+                        pass
+                if record.get("dst_port"):
+                    try:
+                        tcp.dport = int(record["dst_port"])
+                    except Exception:
+                        pass
+                pkt = pkt / tcp
+            elif proto == "UDP":
+                udp = UDP()
+                if record.get("src_port"):
+                    try:
+                        udp.sport = int(record["src_port"])
+                    except Exception:
+                        pass
+                if record.get("dst_port"):
+                    try:
+                        udp.dport = int(record["dst_port"])
+                    except Exception:
+                        pass
+                pkt = pkt / udp
+            elif proto in ("ICMP", "ICMPV6"):
+                if _ICMPV6_BASES:
+                    try:
+                        pkt = pkt / _ICMPV6_BASES[0]()
+                    except Exception:
+                        pass
+        elif record.get("src_ip") or record.get("dst_ip") or proto in ("IPV4", "TCP", "UDP", "ICMP"):
+            ip = IP()
+            if record.get("src_ip"):
+                ip.src = str(record["src_ip"])
+            if record.get("dst_ip"):
+                ip.dst = str(record["dst_ip"])
+            if record.get("ttl"):
+                try:
+                    ip.ttl = int(record["ttl"])
+                except Exception:
+                    pass
+            pkt = pkt / ip
+            if proto == "TCP":
+                tcp = TCP()
+                if record.get("src_port"):
+                    try:
+                        tcp.sport = int(record["src_port"])
+                    except Exception:
+                        pass
+                if record.get("dst_port"):
+                    try:
+                        tcp.dport = int(record["dst_port"])
+                    except Exception:
+                        pass
+                pkt = pkt / tcp
+            elif proto == "UDP":
+                udp = UDP()
+                if record.get("src_port"):
+                    try:
+                        udp.sport = int(record["src_port"])
+                    except Exception:
+                        pass
+                if record.get("dst_port"):
+                    try:
+                        udp.dport = int(record["dst_port"])
+                    except Exception:
+                        pass
+                pkt = pkt / udp
+            elif proto == "ICMP":
+                pkt = pkt / ICMP()
+
+        preview = record.get("payload_preview")
+        if preview:
+            clean_hex = str(preview).replace("...", "").strip()
+            if clean_hex:
+                try:
+                    payload_bytes = bytes.fromhex(clean_hex)
+                    pkt = pkt / Raw(load=payload_bytes)
+                except Exception:
+                    pass
+
+        return pkt
+    except Exception:
+        return None
+
+
+
 def _l3_sniff(iface, count, bpf_filter=None):
     """Native layer-3 capture, falling back to the default interface when the
     chosen one has no valid bind address."""
@@ -431,7 +587,52 @@ def main():
     parser.add_argument("--pcap", help="write captured frames to this .pcap file")
     parser.add_argument("--json", dest="json_path", help="export parsed packet details to a JSON file")
     parser.add_argument("--csv", dest="csv_path", help="export parsed packet details to a CSV file")
+    parser.add_argument("--import-json", dest="import_json_path", help="import and inspect packet records from a JSON file")
+    parser.add_argument("--import-csv", dest="import_csv_path", help="import and inspect packet records from a CSV file")
     args = parser.parse_args()
+
+    # Offline import handling
+    if args.import_json_path or args.import_csv_path:
+        import_path = args.import_json_path or args.import_csv_path
+        print(f"\nImporting records from: {import_path}")
+        try:
+            if args.import_json_path:
+                records = import_json(args.import_json_path)
+            else:
+                records = import_csv(args.import_csv_path)
+        except Exception as exc:
+            print(f"Error importing file: {exc}", file=sys.stderr)
+            return
+
+        for rec in records:
+            proto = rec.get("protocol", "Unknown")
+            stats[proto] += 1
+            pkt = record_to_packet(rec)
+            if pkt:
+                captured_packets.append(pkt)
+            captured_records.append(rec)
+            src_info = f"{rec.get('src_ip', '')}:{rec.get('src_port', '')}" if rec.get('src_port') else str(rec.get('src_ip', ''))
+            dst_info = f"{rec.get('dst_ip', '')}:{rec.get('dst_port', '')}" if rec.get('dst_port') else str(rec.get('dst_ip', ''))
+            print(f"#{rec.get('frame_no', '?')} [{rec.get('timestamp', '')}] {rec.get('protocol', 'Unknown'):<6} "
+                  f"{src_info} -> {dst_info} | {rec.get('summary', '')}")
+
+        print(f"\nSuccessfully imported {len(records)} records.")
+
+        if args.pcap and captured_packets:
+            try:
+                wrpcap(args.pcap, captured_packets)
+                print(f"Saved {len(captured_packets)} frames to {args.pcap}")
+            except Exception as err:
+                print(f"Error saving PCAP file {args.pcap}: {err}", file=sys.stderr)
+
+        if args.json_path:
+            export_json(args.json_path, captured_records)
+
+        if args.csv_path:
+            export_csv(args.csv_path, captured_records)
+
+        print_stats()
+        return
 
     current_os = platform.system()
     if not check_privileges():
